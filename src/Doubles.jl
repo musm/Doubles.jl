@@ -1,22 +1,20 @@
 module Doubles
 
 export Double, twosum_fast, twosum, twoprod
-
-import Base: +, -, *, /, sqrt, abs, convert, promote_rule, show
+import Base: +, -, *, /, sqrt, abs, scale, convert, promote_rule, show
 
 FloatTypes = Union{Float32,Float64}
 abstract AbstractDouble{T} <: Real
-
 immutable Single{T<:FloatTypes} <: AbstractDouble{T}
     hi::T
 end
-
 immutable Double{T<:FloatTypes} <: AbstractDouble{T}
     hi::T
     lo::T
 end
 Double(x) = Single(x)
 Double{T}(x::Tuple{T,T}) = Double(x...)
+DoubleNorm(x,y) = Double(twosum_fast(x,y)) # normalize the double
 
 
 ### promotions and conversions ###
@@ -39,29 +37,16 @@ promote_rule{T}(::Type{Double{T}}, ::Type{Single{T}}) = AbstractDouble{T}
 
 ### utility functions
 
-
-@inline function normalize(x::Double)
-    r = x.hi + x.lo
-    Double(r, (x.hi - r) + x.lo)
-end
-@inline normalize{T<:FloatTypes}(x::T, y::T) = twosum_fast(x,y)
-
-
 # the following are only used for non fma systems
-# clear lower 27 bits (leave upper 26 bits)
-@inline trunclo(x::Float64) = reinterpret(Float64, reinterpret(UInt64, x) & 0xffff_ffff_f800_0000)
-# clear lowest 12 bits (leave upper 12 bits)
-@inline trunclo(x::Float32) = reinterpret(Float32, reinterpret(UInt32, x) & 0xffff_f000)
-
+@inline trunclo(x::Float64) = reinterpret(Float64, reinterpret(UInt64, x) & 0xffff_ffff_f800_0000) # clear lower 27 bits (leave upper 26 bits)
+@inline trunclo(x::Float32) = reinterpret(Float32, reinterpret(UInt32, x) & 0xffff_f000) # clear lowest 12 bits (leave upper 12 bits)
 @inline function splitprec(x::FloatTypes)
     hx = trunclo(x)
     hx, x-hx
 end
 
 
-
 ### basic error free float arithmetic ###
-
 
 # fast two-sum addition, if |x| ≥ |y|
 @inline function twosum_fast{T<:FloatTypes}(x::T, y::T)
@@ -93,7 +78,6 @@ end
 
 ### Double arithmetic ###
 
-
 ## negation
 
 @inline -(x::Double)  = Double(-x.hi, -x.lo)
@@ -104,12 +88,12 @@ end
 
 @inline function +{T}(x::Double{T}, y::Double{T})
     r, s = twosum(x.hi, y.hi)
-    Double(r, s + x.lo + y.lo)
+    DoubleNorm(r, s + x.lo + y.lo)
 end
 
 @inline function +{T}(x::Double{T}, y::Single{T})
     r, s = twosum(x.hi, y.hi)
-    Double(r, s + x.lo)
+    DoubleNorm(r, s + x.lo)
 end
 @inline +{T}(x::Single{T}, y::Double{T}{T}) = y + x
 
@@ -117,47 +101,43 @@ end
     Double(twosum(x.hi, y.hi))
 end
 
-
 ## subtraction
 
 @inline function -{T}(x::Double{T}, y::Double{T})
     r, s = twosum(x.hi, -y.hi)
-    Double(r, s + (x.lo - y.lo))
+    DoubleNorm(r, s + (x.lo - y.lo))
 end
 
 @inline function -{T}(x::Double{T}, y::Single{T})
     r, s = twosum(x.hi, -y.hi)
-    Double(r, s + x.lo)
+    DoubleNorm(r, s + x.lo)
 end
 
 @inline function -{T}(x::Single{T}, y::Double{T})
     r, s = twosum(x.hi, -y.hi)
-    Double(r, s + y.lo)
+    DoubleNorm(r, s + y.lo)
 end
 
 @inline function -{T}(x::Single{T}, y::Single{T})
     Double(twosum(x.hi, -y.hi))
 end
 
-
 ## multiplication
-
 
 @inline function *{T}(x::Double{T}, y::Double{T})
     r, s = twoprod(x.hi, y.hi)
-    Double(r, s + x.hi*y.lo + x.Lo*y.hi)
+    DoubleNorm(r, s + x.hi*y.lo + x.lo*y.hi)
 end
 
 @inline function *{T}(x::Double{T}, y::Single{T})
     z0, z1 = twoprod(x.hi, y.hi)
-    Double(z0, z1 + x.lo)
+    DoubleNorm(z0, z1 + x.lo)
 end
 @inline *{T}(x::Single{T}, y::Double{T}) = y*x
 
 @inline function *{T}(x::Single{T}, y::Single{T})
     Double(twoprod(x.hi, y.hi))
 end
-
 
 ## division
 
@@ -179,17 +159,17 @@ end
 
 @inline function /{T}(x::Double{T}, y::Double{T})
     r, s, ry = pdiv(x.hi, y.hi)
-    Double(r, (s + muladd(-r, y.lo, x.lo))*ry)
+    DoubleNorm(r, (s + muladd(-r, y.lo, x.lo))*ry)
 end
 
 @inline function /{T}(x::Double{T}, y::Single{T})
     r, s, ry = pdiv(x.hi, y.hi)
-    Double(r, (s - x.lo)*ry)
+    DoubleNorm(r, (s - x.lo)*ry)
 end
 
 @inline function /{T}(x::Single{T}, y::Double{T})
     r, s, ry = pdiv(x.hi, y.hi)
-    Double(r, (s - r*y.lo)*ry)
+    DoubleNorm(r, muladd(-r, y.lo, s)*ry)
 end
 
 @inline function /{T}(x::Single{T}, y::Single{T})
@@ -197,12 +177,16 @@ end
     Double(r, s*ry)
 end
 
-
 ## square root
-
 
 # fast sqrt (no domain checking) make sure to handle errors in calling method
 _sqrt{T<:FloatTypes}(x::T) = Base.box(T, Base.sqrt_llvm_fast(Base.unbox(T, x)))
+
+# x is double, z is double
+@inline function sqrt(x::Double)
+    r = _sqrt(x.hi)
+    DoubleNorm(r, (x.lo + fma(-r, r, x.hi))/(r+r))
+end
 
 # x is single, z is double
 @inline function sqrt(x::Single)
@@ -210,16 +194,7 @@ _sqrt{T<:FloatTypes}(x::T) = Base.box(T, Base.sqrt_llvm_fast(Base.unbox(T, x)))
     Double(r, fma(-r, r, x.hi)/(r+r))
 end
 
-# x is double, z is double
-@inline function sqrt(x::Double)
-    r = _sqrt(x.hi)
-    Double(r, (x.lo + fma(-r, r, x.hi))/(r+r))
-end
-
-
-
 ### auxiliary
-
 
 function abs(x::Single)
     Single(abs(x.hi))
@@ -229,11 +204,16 @@ function abs(x::Double)
     Double(abs(x.hi), abs(x.lo))
 end
 
+@inline scale{T<:FloatTypes}(x::Double{T}, s::T) = Double(s*x.hi, s*x.lo)
+@inline scale{T<:FloatTypes}(s::T, x::Double{T}) = Double(s*x.hi, s*x.lo)
+
+
 function show{T}(io::IO, x::Double{T})
     println(io, "Double{$T}")
     print(io, x.hi, ", ", x.lo)
 end
 
+# hack :P
 function show{T}(io::IO, x::Single{T})
     println(io, "Double{$T}")
     print(io, x.hi)
