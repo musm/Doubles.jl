@@ -1,259 +1,249 @@
 module Doubles
 
-export Double, Single, TwoFold, Dotted
-import Base: +, -, *, /, sqrt,
-             convert, promote_rule, show
+export Double
+
+import Base: +, -, *, /, sqrt, abs, convert, promote_rule, show
 
 FloatTypes = Union{Float32,Float64}
 abstract AbstractDouble{T} <: Real
 
-immutable Double{T<:FloatTypes} <: AbstractTwoFold{T}
+immutable Single{T<:FloatTypes} <: AbstractDouble{T}
+    hi::T
+end
+
+immutable Double{T<:FloatTypes} <: AbstractDouble{T}
     hi::T
     lo::T
+    # function Double(u::T, v::T)
+    #     r = u + v
+    #     new(r, v + (u - r))
+    # end
+end
+Double(x) = Single(x)
+
+
+
+### promotions and conversions ###
+
+# The following hack promotes the float types to AbstractDouble so that 
+# float types get properly converted to a Single type.
+# We need this since we do not want to promote floats to Double since
+# we want to dispatch to methods with the Single type for effiency reasons.
+# Similar for the other types.
+
+convert{T}(::Type{AbstractDouble{T}}, z::T)               = Single(z)
+convert{T}(::Type{AbstractDouble{T}}, z::Type{Single{T}}) = z
+convert{T}(::Type{AbstractDouble{T}}, z::Type{Double{T}}) = z
+
+promote_rule{T}(::Type{Single{T}}, ::Type{T})         = AbstractDouble{T}
+promote_rule{T}(::Type{Double{T}}, ::Type{T})         = AbstractDouble{T}
+promote_rule{T}(::Type{Double{T}}, ::Type{Single{T}}) = AbstractDouble{T}
+
+
+
+### utility functions
+
+
+@inline function normalize(x::Double)
+    r = x.hi + x.lo
+    Double(r, (x.hi - r) + x.lo)
 end
 
-immutable Single{T<:FloatTypes} <: AbstractTwoFold{T}
-    hi::T
+@inline function normalize{T<:FloatTypes}(x::T, y::T) # same as fast two-sum
+    r = x + y
+    r, y + (x - r)
 end
 
-abstract AbstractTwoFold{T} <: Real
 
-immutable TwoFold{T<:FloatTypes} <: AbstractTwoFold{T}
-    value::T
-    error::T
+# the following are only used for non fma systems
+# clear lower 27 bits (leave upper 26 bits)
+@inline trunclo(x::Float64) = reinterpret(Float64, reinterpret(UInt64, x) & 0xffff_ffff_f800_0000)
+# clear lowest 12 bits (leave upper 12 bits)
+@inline trunclo(x::Float32) = reinterpret(Float32, reinterpret(UInt32, x) & 0xffff_f000)
+
+@inline function splitprec(x::FloatTypes)
+    hx = trunclo(x)
+    hx, x-hx
 end
 
-immutable Dotted{T<:FloatTypes} <: AbstractTwoFold{T}
-    value::T
-end
-
-# The following hack promotes the float types to AbstractTwoFold so that 
-# float types get properly converted to a Dotted type.
-# We need this since we do not want to promote floats to TwoFold since
-# we want to dispatch to methods with the Dotted type for effiency reaons
-convert{T<:FloatTypes}(::Type{AbstractTwoFold{T}}, z::T) = Dotted(z)
-promote_rule{T<:FloatTypes}(::Type{Dotted{T}}, ::Type{T}) = AbstractTwoFold{T}
-promote_rule{T}(::Type{TwoFold{T}}, ::Type{T}) = AbstractTwoFold{T}
-
-# see comment above
-convert{T<:FloatTypes}(::Type{AbstractDouble{T}}, z::T) = Single(z)
-promote_rule{T<:FloatTypes}(::Type{Single{T}}, ::Type{T}) = AbstractDouble{T}
-promote_rule{T}(::Type{Double{T}}, ::Type{T}) = AbstractDouble{T}
 
 
-# fast sqrt (no domain checking) make sure to handle errors in calling method
-_sqrt{T<:FloatTypes}(x::T) = Base.box(T, Base.sqrt_llvm_fast(Base.unbox(T, x)))
-
-
-
-### basic error free floating point arithmetic ###
+### basic error free float arithmetic ###
 
 
 # fast two-sum addition, if |x| ≥ |y|
 @inline function _tadd{T<:FloatTypes}(x::T, y::T)
-    r0 = x + y
-    r0, y - (r0 - x)
+    r = x + y
+    r, y + (x - r)
 end
 
 # two-sum addition
 @inline function tadd{T<:FloatTypes}(x::T, y::T)
-    r0 = x + y
-    yt = r0 - x
-    xt = r0 - yt
-    r0, (y - yt) + (x - xt)
-end
-
-# fast two-sum subtraction, if |x| ≥ |y|
-@inline function _tsub{T<:FloatTypes}(x::T, y::T)
-    r0 = x - y
-    r0, (x - r0) - y
-end
-
-# two-sum subtraction
-@inline function tsub{T<:FloatTypes}(x::T, y::T)
-    r0 = x - y
-    yt = x - r0
-    xt = yt - r0
-    r0, (y - yt) + (xt - x)
+    r = x + y
+    v = r - x
+    r, (y - v) + (x - (r - v))
 end
 
 # two-product fma
 @inline function tmul{T<:FloatTypes}(x::T, y::T)
-    r0 = x*y
-    r0, fma(x,y,-r0)
+    r = x*y
+    r, fma(x,y,-r)
+end
+
+# two-product non fma
+@inline function tmul_{T<:FloatTypes}(x::T, y::T)
+    hx, lx = splitprec(x)
+    hy, ly = splitprec(y)
+    z = x*y
+    z, ((hx*hy-z) + lx*hy + hx*ly) + lx*ly
 end
 
 
+### Double arithmetic ###
 
-### Double & TwoFold arithmetic ###
 
+## negation
+
+@inline -(x::Double)  = Double(-x.hi, -x.lo)
+@inline -(x::Single)  = Single(-x.hi)
 
 
 ## addition
 
-
-# both x and y are twofold
-@inline function +{T}(x::TwoFold{T}, y::TwoFold{T})
-    z0, z1 = tadd(x.value, y.value)
-    TwoFold(z0, z1 + (x.error + y.error))
+@inline function +{T}(x::Double{T}, y::Double{T})
+    r, s = tadd(x.hi, y.hi)
+    Double(r, s + x.lo + y.lo)
 end
 
-# x is twofold and y is dotted
-@inline function +{T}(x::TwoFold{T}, y::Dotted{T})
-    z0, z1 = tadd(x.value, y.value)
-    TwoFold(z0, z1 + x.error)
+@inline function +{T}(x::Double{T}, y::Single{T})
+    r, s = tadd(x.hi, y.hi)
+    Double(r, s + x.lo)
 end
+@inline +{T}(x::Single{T}, y::Double{T}{T}) = y + x
 
-# x is dotted and y is twofold
-@inline +{T}(x::Dotted{T}, y::TwoFold{T}{T}) = y + x
-
-# both x and y are dotted
-@inline function +{T}(x::Dotted{T}, y::Dotted{T})
-    TwoFold(tadd(x.value, y.value)...)
+@inline function +{T}(x::Single{T}, y::Single{T})
+    r, s = tadd(x.hi, y.hi)
+    Double(r,s)
 end
 
 
 ## subtraction
 
-
-# both x and y are twofold
-@inline function -{T}(x::TwoFold{T}, y::TwoFold{T})
-    z0, z1 = psub(x.value, y.value)
-    TwoFold(z0, z1 + (x.error - y.error))
+@inline function -{T}(x::Double{T}, y::Double{T})
+    r, s = tadd(x.hi, -y.hi)
+    Double(r, s + (x.lo - y.lo))
 end
 
-# x is twofold and y is dotted
-@inline function -{T}(x::TwoFold{T}, y::Dotted{T})
-    z0, z1 = psub(x.value, y.value)
-    TwoFold(z0, z1 + x.error)
+@inline function -{T}(x::Double{T}, y::Single{T})
+    r, s = tadd(x.hi, -y.hi)
+    Double(r, s + x.lo)
 end
 
-# x is dotted and y is twofold
-@inline function -{T}(x::Dotted{T}, y::TwoFold{T})
-    z0, z1 = psub(x.value, y.value)
-    TwoFold(z0, z1 + y.error)
+@inline function -{T}(x::Single{T}, y::Double{T})
+    r, s = tadd(x.hi, -y.hi)
+    Double(r, s + y.lo)
 end
 
-# both x and y are dotted
-@inline function -{T}(x::Dotted{T}, y::Dotted{T})
-    TwoFold(psub(x.value, y.value)...)
+@inline function -{T}(x::Single{T}, y::Single{T})
+    Double(tsub(x.hi, -y.hi)...)
 end
-
 
 
 ## multiplication
 
-# both x and y are twofold
-@inline function *{T}(x::TwoFold{T}, y::TwoFold{T})
-    z0, z1 = tmul(x.value, y.value)
-    TwoFold(z0, (z1 + x.error*y.error) + (x.value*y.error + x.error*y.value))
+
+@inline function *{T}(x::Double{T}, y::Double{T})
+    r, s = tmul(x.hi, y.hi)
+    Double(r, s + x.hi*y.lo + x.Lo*y.hi)
 end
 
-# x is twofold and y is dotted
-@inline function *{T}(x::TwoFold{T}, y::Dotted{T})
-    z0, z1 = tmul(x.value, y.value)
-    TwoFold(z0, z1 + x.error)
+@inline function *{T}(x::Double{T}, y::Single{T})
+    z0, z1 = tmul(x.hi, y.hi)
+    Double(z0, z1 + x.lo)
 end
+@inline *{T}(x::Single{T}, y::Double{T}) = y*x
 
-# x is dotted and y is twofold
-@inline *{T}(x::Dotted{T}, y::TwoFold{T}) = y*x
-
-# both x and y are dotted
-@inline function *{T}(x::Dotted{T}, y::Dotted{T})
-    TwoFold(tmul(x.value, y.value)...)
+@inline function *{T}(x::Single{T}, y::Single{T})
+    Double(tmul(x.hi, y.lo)...)
 end
 
 
+# ## division
 
-## division
+# # both x and y are twofold
+# @inline function /{T}(x::TwoFold{T}, y::TwoFold{T})
+#     q0 = x.value/y.value
+#     TwoFold(q0, (fma(-q0, y.value, x.value) + fma(-q0, y.error, x.error))/(y.value + y.error))
+# end
 
+# # x is twofold and y is dotted
+# @inline function /{T}(x::TwoFold{T}, y::Dotted{T})
+#     q0 = x.value/y.value
+#     TwoFold(q0, (x.error + fma(-q0, y.value, x.value))/y.value)
+# end
 
-# both x and y are twofold
-@inline function /{T}(x::TwoFold{T}, y::TwoFold{T})
-    q0 = x.value/y.value
-    TwoFold(q0, (fma(-q0, y.value, x.value) + fma(-q0, y.error, x.error))/(y.value + y.error))
+# # x is dotted, y is twofold
+# @inline function /{T<:Dotted}(x::Dotted{T}, y::TwoFold{T})
+#     q0 = x.value/y.value
+#     TwoFold(q0, (fma(-q0, y.value, x.value) + -q0*y.error)/(y.value + y.error))
+# end
+
+@inline function /{T}(x::Single{T}, y::Single{T}) # fma only
+    ry = 1/y.hi
+    r = x.hi*ry
+    Double(r, fma(-r, y.hi, x.hi)*ry)
 end
 
-# x is twofold and y is dotted
-@inline function /{T}(x::TwoFold{T}, y::Dotted{T})
-    q0 = x.value/y.value
-    TwoFold(q0, (x.error + fma(-q0, y.value, x.value))/y.value)
+
+@inline function div_nonfma{T}(x::Single{T}, y::Single{T})
+    ry = 1/y
+    r = x*ry
+    hx, lx = splitprec(r)
+    hy, ly = splitprec(y)
+    z = r*y
+    Double(r, (((-hx*hy+z) - lx*hy - hx*ly) - lx*ly)*ry)
 end
 
-# x is dotted, y is twofold
-@inline function /{T<:Dotted}(x::Dotted{T}, y::TwoFold{T})
-    q0 = x.value/y.value
-    TwoFold(q0, (fma(-q0, y.value, x.value) + -q0*y.error)/(y.value + y.error))
-end
-
-# both x and y are dotted
-@inline function /{T}(x::Dotted{T}, y::Dotted{T})
-    q0 = x.value/y.value
-    TwoFold(q0, (fma(-q0, y.value, x.value))/y.value)
-end
+## square root
 
 
-## square root (see warning for _sqrt above)
-
-
-# x is dotted, z is twfold
-@inline function sqrt(x::Dotted)
-    z0 = _sqrt(x.value)
-    TwoFold(z0, fma(-z0, z0, x.value)/(z0+z0)) # actually as good as Double here
-end
-
-# x is twofold, z is twofold
-@inline function sqrt(x::TwoFold)
-    z0 = _sqrt(x.value)
-    u0, u1 = tadd(x.value, x.error)
-    v0 = _sqrt(u0)
-    v1 = (u1 + fma(-v0, v0, u0)) / (v0 + v0)
-    w  = tsub(v, Dotted(z0))
-    TwoFold(z0, w.value + w.error)
-end
+# fast sqrt (no domain checking) make sure to handle errors in calling method
+_sqrt{T<:FloatTypes}(x::T) = Base.box(T, Base.sqrt_llvm_fast(Base.unbox(T, x)))
 
 # x is single, z is double
 @inline function sqrt(x::Single)
-    z0 = _sqrt(x.hi)
-    Double(z0, fma(-z0, z0, x.hi)/(z0+z0))
+    r = _sqrt(x.hi)
+    Double(r, fma(-r, r, x.hi)/(r+r))
 end
 
 # x is double, z is double
 @inline function sqrt(x::Double)
-    z0 = _sqrt(x.hi)
-    z1 = x.lo + fma(-z0, z0, x.hi)
-    Double(_normalize(z0, (x.lo + fma(-z0, z0, x.hi))/(z0+z0))...)
+    r = _sqrt(x.hi)
+    Double(r, (x.lo + fma(-r, r, x.hi))/(r+r))
 end
+
+
 
 ### auxiliary
 
 
-@inline -(x::TwoFold) = TwoFold(-x.value, -x.error)
-@inline -(x::Dotted)  = Dotted(-x.value)
-
-@inline -(x::Double) = Double(-x.value, -x.error)
-@inline -(x::Single)  = Single(-x.value)
-
-@inline scale{T}(x::TwoFold{T}, s::Dotted{T}) = TwoFold(s.value*x.value, s.value*x.error)
-
-function show{T<:TwoFold}(io::IO, x::T)
-    println(io, T)
-    print(io, x.value, " [", x.error, "]")
+function abs(x::Single)
+    Single(abs(x.hi))
 end
 
-function show{T<:Dotted}(io::IO, x::T)
-    println(io, T)
-    print(io, x.value)
+function abs(x::Double)
+    Double(abs(x.hi), abs(x.lo))
 end
 
-function show{T<:Double}(io::IO, x::T)
-    println(io, T)
-    print(io, x.hi, " hi, ", x.lo, " lo")
+function show{T}(io::IO, x::Double{T})
+    println(io, "Double{$T}")
+    print(io, x.hi, ", ", x.lo)
 end
 
-function show{T<:Single}(io::IO, x::T)
-    println(io, T)
+function show{T}(io::IO, x::Single{T})
+    println(io, "Double{$T}")
     print(io, x.hi)
 end
+
 
 end
