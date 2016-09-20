@@ -1,46 +1,31 @@
 module TwoFolds
 
 export TwoFold, Dotted
-
 import Base: show, +, -, *, /, sqrt, convert, promote_rule
 
-
-FloatTypes = Union{Float32,Float64} # dotted emphasizes a normal float type
- 
+FloatTypes = Union{Float32,Float64}
 abstract ATwoFold{T}  <: Real
 
 immutable TwoFold{T<:FloatTypes} <: ATwoFold{T}
     value::T
     error::T
 end
-TwoFold{T<:FloatTypes}(x::T) = TwoFold{T}(x, zero(T))
 
 immutable Dotted{T<:FloatTypes} <: ATwoFold{T}
     value::T
 end
 
-
-
-function show{T<:TwoFold}(io::IO, x::T)
-    println(io, T)
-    print(io, x.value, "  [", x.error, "]")
-end
-
-function show{T<:Dotted}(io::IO, x::T)
-    println(io, T)
-    print(io, x.value)
-end
-
-convert{T<:FloatTypes}(::Type{Dotted{T}}, z::T) = Dotted(z)
-promote_rule{T<:FloatTypes}(::Type{Dotted{T}}, ::Type{T}) = Dotted{T}
-
-# convert(::Type{TwoFold}, z::Dotted) = TwoFold(z.value)
-# promote_rule{T}(::Type{TwoFold{T}}, ::Type{Dotted{T}}) = TwoFold{T}
+# The following hack promotes the float types to ATwoFold and then 
+# this gets properly converted to a Dotted type.
+# We need this since we do not want to promote floats to a TwoFold since
+# we want to dispatch to the proper methods with the Dotted type for effiency reaons
+convert{T<:FloatTypes}(::Type{ATwoFold{T}}, z::T) = Dotted(z)
+promote_rule{T<:FloatTypes}(::Type{Dotted{T}}, ::Type{T}) = ATwoFold{T}
+promote_rule{T}(::Type{TwoFold{T}}, ::Type{T}) = ATwoFold{T}
 
 
 # fast sqrt (no domain checking) make sure to handle errors in calling method
 _sqrt{T}(x::Dotted{T}) = Base.box(T, Base.sqrt_llvm_fast(Base.unbox(T, x)))
-
 
 
 ### basic error free floating point arithmetic ###
@@ -217,5 +202,14 @@ end
 
 @inline scale{T}(x::TwoFold{T}, s::Dotted{T}) = TwoFold(s.value*x.value, s.value*x.error)
 
+function show{T<:TwoFold}(io::IO, x::T)
+    println(io, T)
+    print(io, x.value, " [", x.error, "]")
+end
+
+function show{T<:Dotted}(io::IO, x::T)
+    println(io, T)
+    print(io, x.value)
+end
 
 end
