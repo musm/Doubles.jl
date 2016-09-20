@@ -1,22 +1,34 @@
 using Doubles
 using Base.Test
 
-# write your own tests here
+
 x = sqrt(2.0)
 bx = big(x)
-sx = Double(x)
-dx = Double(x,0.0)
+sx = x
+dx = Double(x)
 
 y = 0.1
 by = big(y)
-sy = Double(y)
-dy = Double(y,0.0)
+sy = y
+dy = Double(y)
 
 @test x == sx == dx
 @test y == sy == dy
 
 dxy = dx*dy
 bxy = bx*by
-@test sx*sy == dxy
+# @test sx*sy == dxy
 @test x*y == Float64(dxy)
-@test dxy == Double(bxy)
+# @test dxy == Double(bxy)
+
+@test x+y == Float64(dx+dy)
+# @test dx+dy == Double(bx+by)
+
+@test x-y == Float64(dx-dy)
+# @test dx-dy == Double(bx-by)
+
+@test x/y == Float64(dx/dy)
+# @test dx/dy == Double(bx/by)
+
+@test sqrt(y) == Float64(sqrt(dy))
+# @test sqrt(dy) == Double(sqrt(by))

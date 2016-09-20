@@ -19,6 +19,11 @@ DoubleNorm(x,y) = Double(twosum_fast(x,y)) # normalize the double
 
 ### promotions and conversions ###
 
+convert{T<:FloatTypes}(::Type{T}, x::Single) = x.hi
+convert{T<:FloatTypes}(::Type{T}, x::Double) = x.hi + x.lo
+convert(::Type{BigFloat}, x::Single) = big(x.hi)
+convert(::Type{BigFloat}, x::Double) = big(x.hi) + big(x.lo)
+
 # The following hack promotes the float types to AbstractDouble so that 
 # float types get properly converted to a Single type.
 # We need this since we do not want to promote floats to Double since
