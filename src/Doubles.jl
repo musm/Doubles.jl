@@ -1,6 +1,6 @@
 module Doubles
 
-export Double
+export Double, twosum_fast, twosum, twoprod
 
 import Base: +, -, *, /, sqrt, abs, convert, promote_rule, show
 
@@ -14,13 +14,9 @@ end
 immutable Double{T<:FloatTypes} <: AbstractDouble{T}
     hi::T
     lo::T
-    # function Double(u::T, v::T)
-    #     r = u + v
-    #     new(r, v + (u - r))
-    # end
 end
 Double(x) = Single(x)
-
+Double{T}(x::Tuple{T,T}) = Double(x...)
 
 
 ### promotions and conversions ###
@@ -48,11 +44,7 @@ promote_rule{T}(::Type{Double{T}}, ::Type{Single{T}}) = AbstractDouble{T}
     r = x.hi + x.lo
     Double(r, (x.hi - r) + x.lo)
 end
-
-@inline function normalize{T<:FloatTypes}(x::T, y::T) # same as fast two-sum
-    r = x + y
-    r, y + (x - r)
-end
+@inline normalize{T<:FloatTypes}(x::T, y::T) = twosum_fast(x,y)
 
 
 # the following are only used for non fma systems
@@ -72,26 +64,26 @@ end
 
 
 # fast two-sum addition, if |x| ≥ |y|
-@inline function _tadd{T<:FloatTypes}(x::T, y::T)
+@inline function twosum_fast{T<:FloatTypes}(x::T, y::T)
     r = x + y
     r, y + (x - r)
 end
 
 # two-sum addition
-@inline function tadd{T<:FloatTypes}(x::T, y::T)
+@inline function twosum{T<:FloatTypes}(x::T, y::T)
     r = x + y
     v = r - x
     r, (y - v) + (x - (r - v))
 end
 
 # two-product fma
-@inline function tmul{T<:FloatTypes}(x::T, y::T)
+@inline function _twoprod_fma{T<:FloatTypes}(x::T, y::T)
     r = x*y
     r, fma(x,y,-r)
 end
 
-# two-product non fma
-@inline function tmul_{T<:FloatTypes}(x::T, y::T)
+# two-product non-fma
+@inline function _twoprod{T<:FloatTypes}(x::T, y::T)
     hx, lx = splitprec(x)
     hy, ly = splitprec(y)
     z = x*y
@@ -111,41 +103,40 @@ end
 ## addition
 
 @inline function +{T}(x::Double{T}, y::Double{T})
-    r, s = tadd(x.hi, y.hi)
+    r, s = twosum(x.hi, y.hi)
     Double(r, s + x.lo + y.lo)
 end
 
 @inline function +{T}(x::Double{T}, y::Single{T})
-    r, s = tadd(x.hi, y.hi)
+    r, s = twosum(x.hi, y.hi)
     Double(r, s + x.lo)
 end
 @inline +{T}(x::Single{T}, y::Double{T}{T}) = y + x
 
 @inline function +{T}(x::Single{T}, y::Single{T})
-    r, s = tadd(x.hi, y.hi)
-    Double(r,s)
+    Double(twosum(x.hi, y.hi))
 end
 
 
 ## subtraction
 
 @inline function -{T}(x::Double{T}, y::Double{T})
-    r, s = tadd(x.hi, -y.hi)
+    r, s = twosum(x.hi, -y.hi)
     Double(r, s + (x.lo - y.lo))
 end
 
 @inline function -{T}(x::Double{T}, y::Single{T})
-    r, s = tadd(x.hi, -y.hi)
+    r, s = twosum(x.hi, -y.hi)
     Double(r, s + x.lo)
 end
 
 @inline function -{T}(x::Single{T}, y::Double{T})
-    r, s = tadd(x.hi, -y.hi)
+    r, s = twosum(x.hi, -y.hi)
     Double(r, s + y.lo)
 end
 
 @inline function -{T}(x::Single{T}, y::Single{T})
-    Double(tsub(x.hi, -y.hi)...)
+    Double(twosum(x.hi, -y.hi))
 end
 
 
@@ -153,56 +144,59 @@ end
 
 
 @inline function *{T}(x::Double{T}, y::Double{T})
-    r, s = tmul(x.hi, y.hi)
+    r, s = twoprod(x.hi, y.hi)
     Double(r, s + x.hi*y.lo + x.Lo*y.hi)
 end
 
 @inline function *{T}(x::Double{T}, y::Single{T})
-    z0, z1 = tmul(x.hi, y.hi)
+    z0, z1 = twoprod(x.hi, y.hi)
     Double(z0, z1 + x.lo)
 end
 @inline *{T}(x::Single{T}, y::Double{T}) = y*x
 
 @inline function *{T}(x::Single{T}, y::Single{T})
-    Double(tmul(x.hi, y.lo)...)
+    Double(twoprod(x.hi, y.hi))
 end
 
 
-# ## division
+## division
 
-# # both x and y are twofold
-# @inline function /{T}(x::TwoFold{T}, y::TwoFold{T})
-#     q0 = x.value/y.value
-#     TwoFold(q0, (fma(-q0, y.value, x.value) + fma(-q0, y.error, x.error))/(y.value + y.error))
-# end
-
-# # x is twofold and y is dotted
-# @inline function /{T}(x::TwoFold{T}, y::Dotted{T})
-#     q0 = x.value/y.value
-#     TwoFold(q0, (x.error + fma(-q0, y.value, x.value))/y.value)
-# end
-
-# # x is dotted, y is twofold
-# @inline function /{T<:Dotted}(x::Dotted{T}, y::TwoFold{T})
-#     q0 = x.value/y.value
-#     TwoFold(q0, (fma(-q0, y.value, x.value) + -q0*y.error)/(y.value + y.error))
-# end
-
-@inline function /{T}(x::Single{T}, y::Single{T}) # fma only
-    ry = 1/y.hi
-    r = x.hi*ry
-    Double(r, fma(-r, y.hi, x.hi)*ry)
+# private two-product div fma helper
+@inline function _pdiv_fma{T<:FloatTypes}(x::T, y::T)
+    ry = 1/y
+    r = x*ry
+    r, fma(-r,y,x), ry
 end
 
-
-@inline function div_nonfma{T}(x::Single{T}, y::Single{T})
+# private two-product div helper
+@inline function _pdiv{T<:FloatTypes}(x::T, y::T)
     ry = 1/y
     r = x*ry
     hx, lx = splitprec(r)
     hy, ly = splitprec(y)
-    z = r*y
-    Double(r, (((-hx*hy+z) - lx*hy - hx*ly) - lx*ly)*ry)
+    r, ((-hx*hy+r*y) - lx*hy - hx*ly) - lx*ly, ry
 end
+
+@inline function /{T}(x::Double{T}, y::Double{T})
+    r, s, ry = pdiv(x.hi, y.hi)
+    Double(r, (s + muladd(-r, y.lo, x.lo))*ry)
+end
+
+@inline function /{T}(x::Double{T}, y::Single{T})
+    r, s, ry = pdiv(x.hi, y.hi)
+    Double(r, (s - x.lo)*ry)
+end
+
+@inline function /{T}(x::Single{T}, y::Double{T})
+    r, s, ry = pdiv(x.hi, y.hi)
+    Double(r, (s - r*y.lo)*ry)
+end
+
+@inline function /{T}(x::Single{T}, y::Single{T})
+    r, s, ry = pdiv(x.hi, y.hi)
+    Double(r, s*ry)
+end
+
 
 ## square root
 
@@ -243,6 +237,24 @@ end
 function show{T}(io::IO, x::Single{T})
     println(io, "Double{$T}")
     print(io, x.hi)
+end
+
+
+# Determine if hardware FMA is available, should probably check with LLVM, see #9855.
+# Checks if the `fma` function is fast for the floating point type `T`: typically is it a
+# native instruction (`true`) or does it fall back on a software implementation (`false`).
+function is_fma_fast end
+for T in (Float32, Float64)
+    @eval is_fma_fast(::Type{$T}) = $(muladd(nextfloat(one(T)),nextfloat(one(T)),-nextfloat(one(T),2)) != zero(T))
+end
+is_fma_fast() = is_fma_fast(Float64) && is_fma_fast(Float32)
+
+if is_fma_fast()
+    const twoprod = _twoprod_fma
+    const pdiv = _pdiv_fma
+else
+    const twoprod = _twoprod
+    const pdiv = _pdiv
 end
 
 
