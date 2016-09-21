@@ -1,6 +1,6 @@
 module Doubles
 
-export Double, twosum_fast, twosum, twoprod
+export Double, twosum_fast, twosum, twoprod, scale, abs
 import Base: +, -, *, /, sqrt, abs, scale, convert, promote_rule, show
 
 FloatTypes = Union{Float32,Float64}
@@ -102,9 +102,7 @@ end
 end
 @inline +{T}(x::Single{T}, y::Double{T}{T}) = y + x
 
-@inline function +{T}(x::Single{T}, y::Single{T})
-    Double(twosum(x.hi, y.hi))
-end
+@inline +{T}(x::Single{T}, y::Single{T}) = Double(twosum(x.hi, y.hi))
 
 ## subtraction
 
@@ -123,9 +121,8 @@ end
     DoubleNorm(r, s + y.lo)
 end
 
-@inline function -{T}(x::Single{T}, y::Single{T})
-    Double(twosum(x.hi, -y.hi))
-end
+@inline -{T}(x::Single{T}, y::Single{T}) = Double(twosum(x.hi, -y.hi))
+
 
 ## multiplication
 
@@ -140,9 +137,8 @@ end
 end
 @inline *{T}(x::Single{T}, y::Double{T}) = y*x
 
-@inline function *{T}(x::Single{T}, y::Single{T})
-    Double(twoprod(x.hi, y.hi))
-end
+@inline *{T}(x::Single{T}, y::Single{T}) = Double(twoprod(x.hi, y.hi))
+
 
 ## division
 
@@ -201,17 +197,13 @@ end
 
 ### auxiliary
 
-function abs(x::Single)
-    Single(abs(x.hi))
-end
-
-function abs(x::Double)
-    Double(abs(x.hi), abs(x.lo))
-end
+@inline abs(x::Single) = Single(abs(x.hi))
+@inline abs(x::Double) = Double(abs(x.hi), abs(x.lo))
 
 @inline scale{T<:FloatTypes}(x::Double{T}, s::T) = Double(s*x.hi, s*x.lo)
 @inline scale{T<:FloatTypes}(s::T, x::Double{T}) = Double(s*x.hi, s*x.lo)
-
+@inline scale{T<:FloatTypes}(x::Single{T}, s::T) = Single(s*x.hi)
+@inline scale{T<:FloatTypes}(s::T, x::Single{T}) = Single(s*x.hi)
 
 function show{T}(io::IO, x::Double{T})
     println(io, "Double{$T}")

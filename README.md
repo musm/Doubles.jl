@@ -11,7 +11,7 @@ This package implements Double arithmetic in Julia. In particular this package f
 
 Double arithmetic is based on Dekker's technique from 1971. The basic idea is to store an unevaluated sum of a number in terms of its high and low bits.
 
-This package is inspired by [`DoubleDouble.jl`](https://github.com/simonbyrne/DoubleDouble.jl). See notes on differences.
+This package is inspired by [`DoubleDouble.jl`](https://github.com/simonbyrne/DoubleDouble.jl). See notes on differences on why this package was created.
 
 # Usage
 The only thing that you need to do to use this package is `x = Double(2.0)` and multiplication, division, sqrt, abs, addition, subtraction, negation should all work.
