@@ -1,7 +1,7 @@
 module Doubles
 
 export Double, twosum_fast, twosum, twoprod, scale, abs
-import Base: +, -, *, /, sqrt, abs, scale, convert, promote_rule, show
+import Base: +, -, *, /, sqrt, abs, scale, ==, convert, promote_rule, show
 
 FloatTypes = Union{Float32,Float64}
 abstract AbstractDouble{T} <: Real
@@ -37,7 +37,6 @@ convert{T}(::Type{AbstractDouble{T}}, z::Type{Double{T}}) = z
 promote_rule{T}(::Type{Single{T}}, ::Type{T})         = AbstractDouble{T}
 promote_rule{T}(::Type{Double{T}}, ::Type{T})         = AbstractDouble{T}
 promote_rule{T}(::Type{Double{T}}, ::Type{Single{T}}) = AbstractDouble{T}
-
 
 
 ### utility functions
@@ -197,13 +196,16 @@ end
 
 ### auxiliary
 
-@inline abs(x::Single) = Single(abs(x.hi))
-@inline abs(x::Double) = Double(abs(x.hi), abs(x.lo))
+==(x::Double, y::Single) = x.hi == y.hi
+==(x::Single, y::Double) = y == x
 
-@inline scale{T<:FloatTypes}(x::Double{T}, s::T) = Double(s*x.hi, s*x.lo)
-@inline scale{T<:FloatTypes}(s::T, x::Double{T}) = Double(s*x.hi, s*x.lo)
-@inline scale{T<:FloatTypes}(x::Single{T}, s::T) = Single(s*x.hi)
-@inline scale{T<:FloatTypes}(s::T, x::Single{T}) = Single(s*x.hi)
+abs(x::Single) = Single(abs(x.hi))
+abs(x::Double) = Double(abs(x.hi), abs(x.lo))
+
+scale{T<:FloatTypes}(x::Double{T}, s::T) = Double(s*x.hi, s*x.lo)
+scale{T<:FloatTypes}(s::T, x::Double{T}) = Double(s*x.hi, s*x.lo)
+scale{T<:FloatTypes}(x::Single{T}, s::T) = Single(s*x.hi)
+scale{T<:FloatTypes}(s::T, x::Single{T}) = Single(s*x.hi)
 
 function show{T}(io::IO, x::Double{T})
     println(io, "Double{$T}")

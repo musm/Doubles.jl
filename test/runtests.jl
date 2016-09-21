@@ -1,6 +1,8 @@
 using Doubles
 using Base.Test
 
+# courtesy: https://github.com/simonbyrne/DoubleDouble.jl
+
 
 x = sqrt(2.0)
 bx = big(x)
@@ -17,7 +19,7 @@ dy = Double(y)
 
 dxy = dx*dy
 bxy = bx*by
-# @test sx*sy == dxy
+@test sx*sy == dxy
 @test x*y == Float64(dxy)
 # @test dxy == Double(bxy)
 
